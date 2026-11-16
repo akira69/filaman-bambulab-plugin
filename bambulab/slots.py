@@ -357,12 +357,12 @@ class SlotSupportMixin:
 
         slots = []
         tray_counts: dict[int, int] = {}
-        for slot_index in dict.fromkeys((*previous, *reported, *self._unverified_ams_trays)):
+        slot_indices = dict.fromkeys((*previous, *reported, *self._unverified_ams_trays, *self._saved_ams_slots))
+        for slot_index in slot_indices:
             unverified = self._unverified_ams_trays.pop(slot_index, {})
             ams_id, tray_id = self._parse_slot_index(slot_index)
             if not self._ams_unit_is_connected(ams_id, unit_bits):
                 continue
-            tray_counts[ams_id] = tray_counts.get(ams_id, 0) + 1
             old_slot = previous.get(slot_index, {})
             tray = reported.get(slot_index, {})
             incoming_uuid = self._normalize_hex_identifier(tray.get("tray_uuid"), 32)
@@ -381,8 +381,13 @@ class SlotSupportMixin:
                 self._ams_state_presence.pop(slot_index, None)
 
             present = self._ams_reported_presence(ams_id, tray_id)
+            if present is None and not (old_slot or tray or unverified):
+                continue
+            tray_counts[ams_id] = tray_counts.get(ams_id, 0) + 1
             if present is None:
-                if not old_slot and not id_only and "tray_type" not in tray:
+                # A blank profile alone cannot invalidate a saved spool link.
+                saved_blank_profile = slot_index in self._saved_ams_slots and not tray.get("tray_type")
+                if not old_slot and not id_only and ("tray_type" not in tray or saved_blank_profile):
                     self._unverified_ams_trays[slot_index] = {**unverified, **tray}
                     continue
                 if not tray:
@@ -391,6 +396,12 @@ class SlotSupportMixin:
                     present = False  # Legacy empty trays can contain only the ID.
                 else:
                     present = bool(tray["tray_type"]) if "tray_type" in tray else old_slot.get("present", False)
+
+            if ams_id not in units:
+                units[ams_id] = {
+                    "ams_id": ams_id, "humidity": None, "temp": None,
+                    "serial": self._ams_serials.get(str(ams_id)), "info": None,
+                }
 
             if ams_id >= 128:
                 slot_name = f"AMS HT {ams_id - 127} - Slot {tray_id + 1}"

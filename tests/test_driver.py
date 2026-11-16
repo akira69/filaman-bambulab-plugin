@@ -428,6 +428,39 @@ class InventoryEnrichmentCoordinatorTests(unittest.IsolatedAsyncioTestCase):
 
 
 class SlotProcessingTests(unittest.TestCase):
+    def test_blank_profile_at_startup_preserves_saved_spool_link(self):
+        driver, events = make_driver()
+        driver._saved_ams_slots = {"0-0": "AMS 1 - Slot 1"}
+        driver._begin_slot_sync()
+
+        driver._process_slots({"print": {"ams": {
+            "ams_exist_bits": "1",
+            "ams": [{"id": "0", "tray": [{"id": "0", "tray_type": ""}]}],
+        }}})
+        self.assertFalse(any(event["slots"] for event in events))
+
+        driver._process_slots({"print": {"ams": {"tray_exist_bits": "1"}}})
+
+        slot, = events[-1]["slots"]
+        self.assertTrue(slot["present"])
+        self.assertNotIn("spool_id", slot)
+
+    def test_first_mask_reconciles_saved_bay_without_a_tray_record(self):
+        driver, events = make_driver()
+        driver._saved_ams_slots = {"0-0": "AMS 1 - Slot 1"}
+        driver._begin_slot_sync()
+
+        driver._process_slots({"print": {"ams": {
+            "ams_exist_bits": "1", "tray_exist_bits": "0",
+        }}})
+
+        self.assertEqual(len(events[-1]["slots"]), 1)
+        slot, = events[-1]["slots"]
+        self.assertEqual(slot["slot_index"], "0-0")
+        self.assertFalse(slot["present"])
+        self.assertIsNone(slot["spool_id"])
+        self.assertEqual(driver.health()["slot_count"], 1)
+
     def test_clearing_material_keeps_the_slot_occupied_and_assignable(self):
         driver, events = make_driver(printer_model="H2C")
         driver._update_spool_location = AsyncMock()
